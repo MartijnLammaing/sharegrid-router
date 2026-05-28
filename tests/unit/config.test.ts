@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MockInstance } from '@vitest/spy';
 
 describe('loadConfig', () => {
-  let exitSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: MockInstance<(code?: number) => never>;
 
   beforeEach(() => {
     vi.resetModules();
-    exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number): never => {
-      throw new Error('process.exit called');
-    });
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(
+      (_code?: string | number | null): never => {
+        throw new Error('process.exit called');
+      },
+    );
   });
 
   afterEach(() => {
