@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Example docker run invocation for LLMRouter.
+# Replace <digest> with the SHA-256 digest of the image you built.
+#
+# The router generates a self-signed TLS cert on first startup and writes it
+# to /data/certs inside the container. No volume mount is required — the
+# writable layer persists the cert across docker stop/start cycles. On a full
+# container recreation (image update) a new cert is generated and the
+# SHAREGRID_ROUTER_URL distributed to hosts and users must be updated.
+#
+# See: docs/architecture_llmrouter.md §6.1
+
+docker run \
+  --name sharegrid-router \
+  --restart unless-stopped \
+  -p 8443:8443 \
+  -e SHAREGRID_LISTEN_ADDR=0.0.0.0:8443 \
+  registry/llmrouter@sha256:<digest>
