@@ -25,7 +25,6 @@ import type { Config } from './config.js';
 export interface HostEntry {
   hostId: string;
   modelName: string;
-  contextSize: number;
   /** `host:port` the user connects to directly. */
   endpoint: string;
   /** `sha256:<hex>` TLS cert fingerprint for user cert pinning. */
@@ -98,7 +97,6 @@ export function createHostRegistry(deps: HostRegistryDeps): HostRegistry {
         (e): HostListEntry => ({
           hostId: e.hostId,
           modelName: e.modelName,
-          contextSize: e.contextSize,
           endpoint: e.endpoint,
           tlsFingerprint: e.tlsFingerprint,
           hostKeyToken: e.hostKeyToken,

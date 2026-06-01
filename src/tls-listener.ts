@@ -89,9 +89,6 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
     return (
       typeof msg['modelName'] === 'string' &&
       msg['modelName'].length > 0 &&
-      typeof msg['contextSize'] === 'number' &&
-      Number.isInteger(msg['contextSize']) &&
-      msg['contextSize'] > 0 &&
       typeof msg['port'] === 'number' &&
       Number.isInteger(msg['port']) &&
       msg['port'] >= 1 &&
@@ -120,7 +117,6 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
     const entry: HostEntry = {
       hostId,
       modelName: registration.modelName,
-      contextSize: registration.contextSize,
       endpoint,
       tlsFingerprint: registration.tlsFingerprint,
       hostKeyToken: token,

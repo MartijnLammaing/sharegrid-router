@@ -10,9 +10,15 @@
 #
 # See: docs/architecture_llmrouter.md §6.1
 
+## Build
+
+cd sharegrid-router
+docker build -t sharegrid-router .
+
+
+## Run
+
 docker run \
-  --name sharegrid-router \
-  --restart unless-stopped \
   -p 8443:8443 \
   -e SHAREGRID_LISTEN_ADDR=0.0.0.0:8443 \
-  registry/llmrouter@sha256:<digest>
+  sharegrid-router

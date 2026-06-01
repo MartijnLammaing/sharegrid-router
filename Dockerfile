@@ -40,6 +40,8 @@ RUN groupadd --gid 1001 sharegrid \
 
 WORKDIR /app
 
+ENV NODE_ENV=production
+
 COPY --from=builder /app/dist/bundle.cjs /app/bundle.cjs
 
 # Prepare the cert directory. The router generates and persists its TLS cert
