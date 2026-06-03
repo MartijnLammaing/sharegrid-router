@@ -74,6 +74,10 @@ export interface TestRouter {
   hostRegistry: ReturnType<typeof createHostRegistry>;
   tlsListener: ReturnType<typeof createTlsListener>;
   certDir: string;
+  /** Host registration secret — include as `roleKey` in RegistrationPayload. */
+  hostSecret: string;
+  /** User access secret — include as `roleKey` in HostListRequest. */
+  userSecret: string;
   teardown(): Promise<void>;
 }
 
@@ -113,6 +117,8 @@ export async function startTestRouter(heartbeatTimeout = 90): Promise<TestRouter
     hostRegistry,
     tlsListener,
     certDir,
+    hostSecret: keyAuthority.getHostSecret(),
+    userSecret: keyAuthority.getUserSecret(),
     async teardown() {
       await tlsListener.stop();
       hostRegistry.stop();
@@ -143,11 +149,15 @@ export function connectClient(port: number, fingerprint: string): Promise<TLSSoc
 
 // ── Registration helper ───────────────────────────────────────────────────────
 
-export const VALID_REGISTRATION = {
-  v: PROTOCOL_VERSION,
-  type: 'register',
-  modelName: 'test-model',
-  contextSize: 4096,
-  port: 9000,
-  tlsFingerprint: 'sha256:' + 'a'.repeat(64),
-} as const;
+/** Build a valid registration payload for a given router's host secret. */
+export function makeValidRegistration(hostSecret: string) {
+  return {
+    v: PROTOCOL_VERSION,
+    type: 'register',
+    modelName: 'test-model',
+    contextSize: 4096,
+    port: 9000,
+    tlsFingerprint: 'sha256:' + 'a'.repeat(64),
+    roleKey: hostSecret,
+  } as const;
+}

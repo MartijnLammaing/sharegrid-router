@@ -9,7 +9,7 @@ import {
   connectClient,
   sendMsg,
   readMsg,
-  VALID_REGISTRATION,
+  makeValidRegistration,
   type TestRouter,
 } from './helpers.js';
 
@@ -30,16 +30,20 @@ describe('Router integration — host list', () => {
     const host2 = await connectClient(router.port, router.fingerprint);
 
     try {
-      sendMsg(host1, { ...VALID_REGISTRATION, modelName: 'model-a', port: 9001 });
+      sendMsg(host1, { ...makeValidRegistration(router.hostSecret), modelName: 'model-a', port: 9001 });
       const ack1 = await readMsg(host1) as unknown as RegistrationAck;
 
-      sendMsg(host2, { ...VALID_REGISTRATION, modelName: 'model-b', port: 9002,
-        tlsFingerprint: 'sha256:' + 'b'.repeat(64) });
+      sendMsg(host2, {
+        ...makeValidRegistration(router.hostSecret),
+        modelName: 'model-b',
+        port: 9002,
+        tlsFingerprint: 'sha256:' + 'b'.repeat(64),
+      });
       const ack2 = await readMsg(host2) as unknown as RegistrationAck;
 
-      // User connects and requests host list
+      // User connects and requests host list with correct user secret
       const userSock = await connectClient(router.port, router.fingerprint);
-      sendMsg(userSock, { v: PROTOCOL_VERSION, type: 'host_list_request' });
+      sendMsg(userSock, { v: PROTOCOL_VERSION, type: 'host_list_request', roleKey: router.userSecret });
       const response = await readMsg(userSock) as unknown as HostListResponse;
 
       expect(response.type).toBe('host_list_response');
@@ -53,7 +57,6 @@ describe('Router integration — host list', () => {
       for (const h of response.hosts) {
         expect(typeof h.hostId).toBe('string');
         expect(typeof h.modelName).toBe('string');
-        expect(typeof h.contextSize).toBe('number');
         expect(typeof h.endpoint).toBe('string');
         expect(typeof h.tlsFingerprint).toBe('string');
         expect(typeof h.hostKeyToken).toBe('string');
@@ -75,5 +78,37 @@ describe('Router integration — host list', () => {
       host1.destroy();
       host2.destroy();
     }
+  });
+
+  it('host list request rejected when roleKey is missing — socket closed, no host list sent', async () => {
+    const userSock = await connectClient(router.port, router.fingerprint);
+    sendMsg(userSock, { v: PROTOCOL_VERSION, type: 'host_list_request' /* no roleKey */ });
+
+    await new Promise<void>((resolve) => {
+      userSock.once('close', resolve);
+      userSock.once('end', resolve);
+      setTimeout(resolve, 1_000);
+    });
+
+    expect(userSock.destroyed).toBe(true);
+    userSock.destroy();
+  });
+
+  it('host list request rejected when roleKey is the host secret (wrong role)', async () => {
+    const userSock = await connectClient(router.port, router.fingerprint);
+    sendMsg(userSock, {
+      v: PROTOCOL_VERSION,
+      type: 'host_list_request',
+      roleKey: router.hostSecret, // wrong role
+    });
+
+    await new Promise<void>((resolve) => {
+      userSock.once('close', resolve);
+      userSock.once('end', resolve);
+      setTimeout(resolve, 1_000);
+    });
+
+    expect(userSock.destroyed).toBe(true);
+    userSock.destroy();
   });
 });

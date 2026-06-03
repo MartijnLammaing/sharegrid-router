@@ -17,7 +17,6 @@ function makeEntry(overrides: Partial<HostEntry> = {}): HostEntry {
   return {
     hostId: 'host-1',
     modelName: 'test-model',
-    contextSize: 4096,
     endpoint: '10.0.0.1:9000',
     tlsFingerprint: 'sha256:' + 'a'.repeat(64),
     hostKeyToken: 'token-1',

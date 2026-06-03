@@ -13,7 +13,8 @@ import {
   connectClient,
   sendMsg,
   createReader,
-  VALID_REGISTRATION,
+  readMsg,
+  makeValidRegistration,
   type TestRouter,
 } from './helpers.js';
 
@@ -34,7 +35,7 @@ describe('Router integration — registration', () => {
     const sock = await connectClient(router.port, router.fingerprint);
 
     try {
-      sendMsg(sock, VALID_REGISTRATION);
+      sendMsg(sock, makeValidRegistration(router.hostSecret));
       const ack = await readMsg(sock) as unknown as RegistrationAck;
 
       expect(ack.v).toBe(PROTOCOL_VERSION);
@@ -56,7 +57,7 @@ describe('Router integration — registration', () => {
 
       // Verify token payload fields
       expect(decoded.payload.hostId).toBe(ack.hostId);
-      expect(decoded.payload.tlsFingerprint).toBe(VALID_REGISTRATION.tlsFingerprint);
+      expect(decoded.payload.tlsFingerprint).toBe('sha256:' + 'a'.repeat(64));
       expect(decoded.payload.expiresAt).toBeGreaterThan(Date.now());
     } finally {
       sock.destroy();
@@ -66,7 +67,7 @@ describe('Router integration — registration', () => {
   it('returns a PEM-encoded Ed25519 public key in routerPublicKey', async () => {
     const sock = await connectClient(router.port, router.fingerprint);
     try {
-      sendMsg(sock, VALID_REGISTRATION);
+      sendMsg(sock, makeValidRegistration(router.hostSecret));
       const ack = await readMsg(sock) as unknown as RegistrationAck;
       expect(ack.routerPublicKey).toMatch(/-----BEGIN PUBLIC KEY-----/);
       expect(ack.routerPublicKey).toMatch(/-----END PUBLIC KEY-----/);
@@ -81,7 +82,7 @@ describe('Router integration — registration', () => {
     const sock = await connectClient(router.port, router.fingerprint);
 
     try {
-      sendMsg(sock, VALID_REGISTRATION);
+      sendMsg(sock, makeValidRegistration(router.hostSecret));
       const ack = await readMsg(sock) as unknown as RegistrationAck;
       const firstToken = ack.hostKeyToken;
 
@@ -111,11 +112,55 @@ describe('Router integration — registration', () => {
     }
   });
 
+  it('registration rejected when roleKey is missing — socket closed with no RegistrationAck', async () => {
+    const sock = await connectClient(router.port, router.fingerprint);
+    const reader = createReader(sock);
+
+    // Send a registration without roleKey
+    sendMsg(sock, {
+      v: PROTOCOL_VERSION,
+      type: 'register',
+      modelName: 'test-model',
+      port: 9000,
+      tlsFingerprint: 'sha256:' + 'a'.repeat(64),
+      // roleKey intentionally omitted
+    });
+
+    // The router should close the connection — we expect no message, then close
+    await new Promise<void>((resolve) => {
+      sock.once('close', resolve);
+      sock.once('end', resolve);
+      // Safety timeout in case the socket is destroyed but close doesn't fire
+      setTimeout(resolve, 1_000);
+    });
+
+    expect(router.hostRegistry.list()).toHaveLength(0);
+    sock.destroy();
+  });
+
+  it('registration rejected when roleKey is the user secret (wrong role)', async () => {
+    const sock = await connectClient(router.port, router.fingerprint);
+
+    sendMsg(sock, {
+      ...makeValidRegistration(router.hostSecret),
+      roleKey: router.userSecret, // wrong role
+    });
+
+    await new Promise<void>((resolve) => {
+      sock.once('close', resolve);
+      sock.once('end', resolve);
+      setTimeout(resolve, 1_000);
+    });
+
+    expect(router.hostRegistry.list()).toHaveLength(0);
+    sock.destroy();
+  });
+
   it('heartbeat updates the registry lastSeen (host remains in list after heartbeat)', async () => {
     const sock = await connectClient(router.port, router.fingerprint);
 
     try {
-      sendMsg(sock, VALID_REGISTRATION);
+      sendMsg(sock, makeValidRegistration(router.hostSecret));
       const ack = await readMsg(sock) as unknown as RegistrationAck;
 
       sendMsg(sock, { v: PROTOCOL_VERSION, type: 'heartbeat', hostId: ack.hostId });

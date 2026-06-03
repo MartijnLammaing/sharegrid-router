@@ -27,6 +27,33 @@ describe('KeyAuthority', () => {
     });
   });
 
+  describe('getHostSecret / getUserSecret', () => {
+    it('getHostSecret() returns a non-empty base64url string', () => {
+      const ka = makeKa();
+      expect(ka.getHostSecret()).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(ka.getHostSecret().length).toBeGreaterThan(0);
+    });
+
+    it('getUserSecret() returns a non-empty base64url string', () => {
+      const ka = makeKa();
+      expect(ka.getUserSecret()).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(ka.getUserSecret().length).toBeGreaterThan(0);
+    });
+
+    it('getHostSecret() and getUserSecret() return different values', () => {
+      const ka = makeKa();
+      expect(ka.getHostSecret()).not.toBe(ka.getUserSecret());
+    });
+
+    it('two separate createKeyAuthority() calls produce four distinct secrets', () => {
+      const ka1 = makeKa();
+      const ka2 = makeKa();
+      const secrets = [ka1.getHostSecret(), ka1.getUserSecret(), ka2.getHostSecret(), ka2.getUserSecret()];
+      const unique = new Set(secrets);
+      expect(unique.size).toBe(4);
+    });
+  });
+
   describe('issueHostKeyToken', () => {
     it('produces a token that round-trips through decodeHostKeyToken', () => {
       const ka = makeKa();

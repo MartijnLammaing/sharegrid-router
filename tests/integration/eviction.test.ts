@@ -13,7 +13,7 @@ import {
   connectClient,
   sendMsg,
   readMsg,
-  VALID_REGISTRATION,
+  makeValidRegistration,
   type TestRouter,
 } from './helpers.js';
 
@@ -33,7 +33,7 @@ describe('Router integration — eviction', () => {
     const hostSock = await connectClient(router.port, router.fingerprint);
 
     try {
-      sendMsg(hostSock, VALID_REGISTRATION);
+      sendMsg(hostSock, makeValidRegistration(router.hostSecret));
       const ack = await readMsg(hostSock) as unknown as RegistrationAck;
       const hostId = ack.hostId;
 
@@ -52,7 +52,7 @@ describe('Router integration — eviction', () => {
 
       // Verify via a user fetching the list
       const userSock = await connectClient(router.port, router.fingerprint);
-      sendMsg(userSock, { v: PROTOCOL_VERSION, type: 'host_list_request' });
+      sendMsg(userSock, { v: PROTOCOL_VERSION, type: 'host_list_request', roleKey: router.userSecret });
       const response = await readMsg(userSock) as unknown as HostListResponse;
       userSock.destroy();
 

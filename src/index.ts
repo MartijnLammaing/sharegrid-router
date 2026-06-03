@@ -54,7 +54,12 @@ async function main(): Promise<void> {
   await tlsListener.start();
 
   // 7. Startup banner — printed to stdout for the operator.
-  await printStartupBanner({ listenAddr: config.SHAREGRID_LISTEN_ADDR, fingerprint });
+  await printStartupBanner({
+    listenAddr: config.SHAREGRID_LISTEN_ADDR,
+    fingerprint,
+    hostSecret: keyAuthority.getHostSecret(),
+    userSecret: keyAuthority.getUserSecret(),
+  });
 
   // 8. SIGTERM/SIGINT handlers for graceful shutdown.
   let shuttingDown = false;

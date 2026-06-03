@@ -299,6 +299,13 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
       const msg = raw as Record<string, unknown>;
 
       if (msg['type'] === 'register') {
+        // Validate role key before anything else — fail closed with no registry write.
+        const roleKey = msg['roleKey'];
+        if (typeof roleKey !== 'string' || roleKey !== keyAuthority.getHostSecret()) {
+          log.warn('registration rejected: missing or invalid roleKey');
+          sock.destroy();
+          return;
+        }
         if (!isValidRegistrationPayload(msg)) {
           log.warn({ msg }, 'invalid registration payload; closing');
           sock.destroy();
@@ -306,9 +313,16 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
         }
         handleHostConnection(sock, msg);
       } else if (msg['type'] === 'host_list_request') {
-        // Validate the HostListRequest shape (just v + type).
+        // Validate role key — fail closed if missing or wrong role.
+        const roleKey = msg['roleKey'];
+        if (typeof roleKey !== 'string' || roleKey !== keyAuthority.getUserSecret()) {
+          log.warn('host list request rejected: missing or invalid roleKey');
+          sock.destroy();
+          return;
+        }
+        // Validate the HostListRequest shape (v + type + roleKey already validated).
         const _req = msg as unknown as HostListRequest;
-        void _req; // no additional fields to validate
+        void _req;
         handleUserConnection(sock);
       } else {
         // Unknown initial message type — close with no response.

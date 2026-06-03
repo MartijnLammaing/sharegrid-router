@@ -13,7 +13,7 @@
  *      docs/implementation_plan_llmrouter.md Phase 3A
  */
 
-import { generateKeyPairSync, type KeyObject } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, type KeyObject } from 'node:crypto';
 import type { Logger } from 'pino';
 import {
   signEd25519,
@@ -32,6 +32,10 @@ export interface KeyAuthorityDeps {
 export interface KeyAuthority {
   /** PEM-encoded SPKI public key — distributed to LLMHosts in RegistrationAck. */
   getPublicKey(): string;
+  /** Role secret for host operators — validated on every registration connection. */
+  getHostSecret(): string;
+  /** Role secret for end users — validated on every host-list connection. */
+  getUserSecret(): string;
   /**
    * Issue a signed host-key token.
    *
@@ -66,11 +70,23 @@ export function createKeyAuthority(deps: KeyAuthorityDeps): KeyAuthority {
 
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }) as string;
 
+  // Generate two independent role secrets. Neither is written to disk or logged.
+  const hostSecret = randomBytes(32).toString('base64url');
+  const userSecret = randomBytes(32).toString('base64url');
+
   log.info('Ed25519 keypair generated');
 
   return {
     getPublicKey(): string {
       return publicKeyPem;
+    },
+
+    getHostSecret(): string {
+      return hostSecret;
+    },
+
+    getUserSecret(): string {
+      return userSecret;
     },
 
     issueHostKeyToken(hostId: string, tlsFingerprint: string, ttlMs: number): string {

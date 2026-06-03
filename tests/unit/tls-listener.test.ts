@@ -19,7 +19,7 @@ vi.mock('node:tls', () => ({
   ),
 }));
 
-const { createTlsListener } = await import('../../src/tls-listener.js');
+import { createTlsListener } from '../../src/tls-listener.js';
 
 // ── Mock socket ───────────────────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ class MockSocket extends EventEmitter {
   write(data: string) { this.written.push(data); return true; }
   end() { this.destroyed = true; return this; }
   destroy() { this.destroyed = true; return this; }
-  once(event: string, fn: (...args: unknown[]) => void) { super.once(event, fn); return this; }
+  override once(event: string, fn: (...args: unknown[]) => void) { super.once(event, fn); return this; }
 
   inject(msg: object) { this.emit('data', JSON.stringify(msg) + '\n'); }
 
@@ -52,8 +52,13 @@ const baseConfig = {
   port: 8443,
 };
 
+const HOST_SECRET = 'mock-host-secret';
+const USER_SECRET = 'mock-user-secret';
+
 const mockKeyAuthority = {
   getPublicKey: vi.fn(() => 'mock-public-key-pem'),
+  getHostSecret: vi.fn(() => HOST_SECRET),
+  getUserSecret: vi.fn(() => USER_SECRET),
   issueHostKeyToken: vi.fn(() => 'mock-token'),
 };
 
@@ -81,9 +86,9 @@ const validRegistration = {
   v: PROTOCOL_VERSION,
   type: 'register',
   modelName: 'test-model',
-  contextSize: 4096,
   port: 9000,
   tlsFingerprint: 'sha256:' + 'a'.repeat(64),
+  roleKey: HOST_SECRET,
 };
 
 describe('TlsListener', () => {
@@ -141,7 +146,6 @@ describe('TlsListener', () => {
 
     it.each([
       ['modelName missing', { ...validRegistration, modelName: '' }],
-      ['contextSize zero', { ...validRegistration, contextSize: 0 }],
       ['port out of range', { ...validRegistration, port: 0 }],
       ['tlsFingerprint invalid', { ...validRegistration, tlsFingerprint: 'invalid' }],
     ])('invalid registration field — %s — closes without adding to registry', async (_, payload) => {
@@ -157,18 +161,56 @@ describe('TlsListener', () => {
     });
   });
 
+  describe('role key validation — host registration path', () => {
+    it('missing roleKey closes socket without registry write', async () => {
+      const { listener, sock } = await startAndConnect();
+      const { roleKey: _omit, ...noKey } = validRegistration;
+      void _omit;
+      sock.inject(noKey);
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.add).not.toHaveBeenCalled();
+      expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+
+    it('roleKey matching user secret (wrong role) closes socket without registry write', async () => {
+      const { listener, sock } = await startAndConnect();
+      sock.inject({ ...validRegistration, roleKey: USER_SECRET });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.add).not.toHaveBeenCalled();
+      expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+
+    it('correct host secret proceeds with registration normally', async () => {
+      const { listener, sock } = await startAndConnect();
+      sock.inject(validRegistration); // roleKey === HOST_SECRET
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.add).toHaveBeenCalledOnce();
+      expect(sock.destroyed).toBe(false);
+
+      await listener.stop();
+    });
+  });
+
   describe('user handshake', () => {
     it('host_list_request triggers hostRegistry.list and replies with HostListResponse', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       mockHostRegistry.list.mockReturnValue([
         {
-          hostId: 'h1', modelName: 'm', contextSize: 4096,
+          hostId: 'h1', modelName: 'm',
           endpoint: '10.0.0.1:9000', tlsFingerprint: 'sha256:' + 'b'.repeat(64),
           hostKeyToken: 'tok',
         },
-      ]);
+      ] as any);
 
       const { listener, sock } = await startAndConnect();
-      sock.inject({ v: PROTOCOL_VERSION, type: 'host_list_request' });
+      sock.inject({ v: PROTOCOL_VERSION, type: 'host_list_request', roleKey: USER_SECRET });
       await new Promise((r) => setTimeout(r, 10));
 
       expect(mockHostRegistry.list).toHaveBeenCalled();
@@ -179,6 +221,43 @@ describe('TlsListener', () => {
 
       // Router closes the connection after replying
       expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+  });
+
+  describe('role key validation — user handshake path', () => {
+    it('missing roleKey closes socket without sending host list', async () => {
+      const { listener, sock } = await startAndConnect();
+      sock.inject({ v: PROTOCOL_VERSION, type: 'host_list_request' });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.list).not.toHaveBeenCalled();
+      expect(sock.messages()).toHaveLength(0);
+      expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+
+    it('roleKey matching host secret (wrong role) closes socket', async () => {
+      const { listener, sock } = await startAndConnect();
+      sock.inject({ v: PROTOCOL_VERSION, type: 'host_list_request', roleKey: HOST_SECRET });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.list).not.toHaveBeenCalled();
+      expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+
+    it('correct user secret returns the host list', async () => {
+      mockHostRegistry.list.mockReturnValue([]);
+      const { listener, sock } = await startAndConnect();
+      sock.inject({ v: PROTOCOL_VERSION, type: 'host_list_request', roleKey: USER_SECRET });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.list).toHaveBeenCalled();
+      expect(sock.messages()[0]!['type']).toBe('host_list_response');
 
       await listener.stop();
     });
