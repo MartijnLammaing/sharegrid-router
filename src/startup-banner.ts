@@ -74,9 +74,24 @@ export async function printStartupBanner(opts: BannerOptions): Promise<void> {
     }
   }
 
+  // ── Additional candidates from host env vars ──────────────────────────────
+  // The container can't see host network interfaces, so LAN and public IPv6
+  // addresses are injected by start-dev.sh before launching the container.
+  const lanIps = (process.env['SHAREGRID_LAN_IPS'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  for (const ip of lanIps) {
+    candidates.push({ label: 'lan', ip });
+  }
+
+  const publicIpv6 = (process.env['SHAREGRID_PUBLIC_IPV6'] ?? '').trim();
+  if (publicIpv6.length > 0) {
+    candidates.push({ label: 'public-ipv6', ip: publicIpv6 });
+  }
+
   // ── URL builder ───────────────────────────────────────────────────────────
   function buildUrl(ip: string, key: string): string {
-    return `https://${ip}:${port}?fp=${fingerprint}&key=${key}`;
+    // IPv6 addresses (contain ':') must be wrapped in brackets per RFC 2732.
+    const host = ip.includes(':') ? `[${ip}]` : ip;
+    return `https://${host}:${port}?fp=${fingerprint}&key=${key}`;
   }
 
   // ── Print banner ──────────────────────────────────────────────────────────
