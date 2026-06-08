@@ -94,18 +94,18 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
       msg['port'] >= 1 &&
       msg['port'] <= 65535 &&
       typeof msg['tlsFingerprint'] === 'string' &&
-      FINGERPRINT_REGEX.test(msg['tlsFingerprint'])
+      FINGERPRINT_REGEX.test(msg['tlsFingerprint']) &&
+      typeof msg['listenHost'] === 'string' &&
+      msg['listenHost'].length > 0
     );
   }
 
   // ── Host connection handler ───────────────────────────────────────────────
 
   function handleHostConnection(sock: TLSSocket, registration: RegistrationPayload): void {
-    // Derive the host endpoint from the socket's remote address + the reported port.
-    const remoteAddress = sock.remoteAddress ?? '0.0.0.0';
-    // Strip IPv6-mapped IPv4 prefix (::ffff:) if present.
-    const host = remoteAddress.replace(/^::ffff:/, '');
-    const endpoint = `${host}:${registration.port}`;
+    // Use the host-advertised address rather than sock.remoteAddress, which
+    // would be a Docker bridge IP when router and host are co-located.
+    const endpoint = `${registration.listenHost}:${registration.port}`;
 
     const hostId = randomUUID();
     const token = keyAuthority.issueHostKeyToken(
