@@ -57,6 +57,7 @@ async function main(): Promise<void> {
   printStartupBanner({
     listenAddr: config.SHAREGRID_LISTEN_ADDR,
     fingerprint,
+    mode: config.SHAREGRID_NETWORK_MODE,
     hostSecret: keyAuthority.getHostSecret(),
     userSecret: keyAuthority.getUserSecret(),
   });

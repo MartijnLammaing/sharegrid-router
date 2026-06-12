@@ -47,6 +47,7 @@ class MockSocket extends EventEmitter {
 const logger = pino({ level: 'silent' });
 const baseConfig = {
   SHAREGRID_LISTEN_ADDR: '0.0.0.0:8443',
+  SHAREGRID_NETWORK_MODE: 'lan' as const,
   SHAREGRID_HEARTBEAT_TIMEOUT: 90,
   host: '0.0.0.0',
   port: 8443,
