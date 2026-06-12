@@ -91,6 +91,7 @@ export async function startTestRouter(heartbeatTimeout = 90): Promise<TestRouter
   const port = await getFreePort();
   const config = {
     SHAREGRID_LISTEN_ADDR: `127.0.0.1:${port}`,
+    SHAREGRID_NETWORK_MODE: 'lan' as const,
     SHAREGRID_HEARTBEAT_TIMEOUT: heartbeatTimeout,
     host: '127.0.0.1',
     port,

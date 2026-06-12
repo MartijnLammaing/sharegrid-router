@@ -7,6 +7,7 @@ const logger = pino({ level: 'silent' });
 function makeConfig(heartbeatTimeout = 90) {
   return {
     SHAREGRID_LISTEN_ADDR: '0.0.0.0:8443',
+    SHAREGRID_NETWORK_MODE: 'lan' as const,
     SHAREGRID_HEARTBEAT_TIMEOUT: heartbeatTimeout,
     host: '0.0.0.0',
     port: 8443,

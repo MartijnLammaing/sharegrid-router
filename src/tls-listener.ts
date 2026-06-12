@@ -25,7 +25,7 @@ import {
   type HostListRequest,
   type HostListResponse,
 } from '@sharegrid/shared/protocol';
-import { FINGERPRINT_REGEX } from '@sharegrid/shared/tls';
+import { FINGERPRINT_REGEX, formatEndpoint } from '@sharegrid/shared/tls';
 import type { KeyAuthority } from './key-authority.js';
 import type { HostRegistry, HostEntry } from './host-registry.js';
 import type { Config } from './config.js';
@@ -105,7 +105,9 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
   function handleHostConnection(sock: TLSSocket, registration: RegistrationPayload): void {
     // Use the host-advertised address rather than sock.remoteAddress, which
     // would be a Docker bridge IP when router and host are co-located.
-    const endpoint = `${registration.listenHost}:${registration.port}`;
+    // formatEndpoint brackets IPv6 literals (internet mode) so the user can
+    // split the `host:port` authority unambiguously.
+    const endpoint = formatEndpoint(registration.listenHost, registration.port);
 
     const hostId = randomUUID();
     const token = keyAuthority.issueHostKeyToken(

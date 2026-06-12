@@ -4,12 +4,17 @@
 # Usage: ./docker-run.sh [--no-build]
 #
 # Builds the Docker image, starts the router, then prints the HOST REGISTRATION
-# and USER ACCESS URLs (LAN IPv4) to stdout.
+# and USER ACCESS URLs to stdout.
 #
 # Environment:
-#   SHAREGRID_ROUTER_PORT   — Host port to publish        (default: 8443)
-#   SHAREGRID_ROUTER_IMAGE  — Docker image name           (default: sharegrid-router)
-#   SHAREGRID_ADVERTISE_IP  — LAN IPv4 to advertise        (default: auto-detected)
+#   SHAREGRID_ROUTER_PORT    — Host port to publish        (default: 8443)
+#   SHAREGRID_ROUTER_IMAGE   — Docker image name           (default: sharegrid-router)
+#   SHAREGRID_NETWORK_MODE   — lan (IPv4) or internet (IPv6) (default: lan)
+#   SHAREGRID_ADVERTISE_IP   — address to advertise        (default: auto-detected)
+#
+# In internet mode the advertised address must be a globally-routable IPv6
+# address. Auto-detection is best-effort; set SHAREGRID_ADVERTISE_IP explicitly
+# for a reliable result.
 
 set -euo pipefail
 
@@ -17,7 +22,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PORT="${SHAREGRID_ROUTER_PORT:-8443}"
 IMAGE="${SHAREGRID_ROUTER_IMAGE:-sharegrid-router}"
+MODE="${SHAREGRID_NETWORK_MODE:-lan}"
 CONTAINER=sharegrid-router
+
+if [[ "$MODE" != "lan" && "$MODE" != "internet" ]]; then
+  echo "[router] ERROR: SHAREGRID_NETWORK_MODE must be 'lan' or 'internet', got: $MODE" >&2
+  exit 1
+fi
 
 BUILD=1
 for arg in "$@"; do
@@ -50,11 +61,41 @@ detect_lan_ip() {
   return 1
 }
 
-ADVERTISE_IP="${SHAREGRID_ADVERTISE_IP:-$(detect_lan_ip || true)}"
-if [[ -z "$ADVERTISE_IP" ]]; then
-  log "ERROR: Could not auto-detect a LAN IPv4 address."
-  log "Set SHAREGRID_ADVERTISE_IP to this machine's LAN IPv4 (e.g. 192.168.1.42)."
-  exit 1
+# Best-effort detection of a globally-routable IPv6 address. Excludes loopback
+# (::1), link-local (fe80::/10) and unique-local (fc00::/7). Unreliable across
+# environments — prefer setting SHAREGRID_ADVERTISE_IP explicitly.
+detect_global_ipv6() {
+  case "$(uname -s)" in
+    Darwin)
+      ifconfig 2>/dev/null | awk '
+        /inet6 / {
+          ip=$2; sub(/%.*/,"",ip);
+          if (ip !~ /^fe80/ && ip != "::1" && ip !~ /^f[cd]/) { print ip; exit }
+        }'
+      ;;
+    *)
+      ip -6 -o addr show scope global 2>/dev/null | awk '
+        { split($4,a,"/"); if (a[1] !~ /^f[cd]/) { print a[1]; exit } }'
+      ;;
+  esac
+}
+
+if [[ "$MODE" == "internet" ]]; then
+  ADVERTISE_IP="${SHAREGRID_ADVERTISE_IP:-$(detect_global_ipv6 || true)}"
+  if [[ -z "$ADVERTISE_IP" ]]; then
+    log "ERROR: Could not auto-detect a globally-routable IPv6 address (internet mode)."
+    log "Set SHAREGRID_ADVERTISE_IP to this machine's public IPv6 (e.g. 2001:db8::1)."
+    exit 1
+  fi
+  LISTEN_ADDR="[::]:${PORT}"
+else
+  ADVERTISE_IP="${SHAREGRID_ADVERTISE_IP:-$(detect_lan_ip || true)}"
+  if [[ -z "$ADVERTISE_IP" ]]; then
+    log "ERROR: Could not auto-detect a LAN IPv4 address."
+    log "Set SHAREGRID_ADVERTISE_IP to this machine's LAN IPv4 (e.g. 192.168.1.42)."
+    exit 1
+  fi
+  LISTEN_ADDR="0.0.0.0:${PORT}"
 fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────
@@ -72,11 +113,12 @@ docker rm -f "$CONTAINER" 2>/dev/null || true
 
 # ── Start ─────────────────────────────────────────────────────────────────────
 
-log "Starting ${CONTAINER} (advertising LAN IPv4 ${ADVERTISE_IP}:${PORT})..."
+log "Starting ${CONTAINER} (mode=${MODE}, advertising ${ADVERTISE_IP} on port ${PORT})..."
 docker run -d \
   --name "$CONTAINER" \
   -p "${PORT}:${PORT}" \
-  -e SHAREGRID_LISTEN_ADDR="0.0.0.0:${PORT}" \
+  -e SHAREGRID_LISTEN_ADDR="$LISTEN_ADDR" \
+  -e SHAREGRID_NETWORK_MODE="$MODE" \
   -e SHAREGRID_LAN_IPS="$ADVERTISE_IP" \
   "$IMAGE"
 
@@ -85,9 +127,14 @@ docker run -d \
 log "Waiting for router startup banner..."
 HOST_URL=""
 USER_URL=""
-# Match the advertised LAN IPv4 URL specifically (escape dots in the IP).
-ESCAPED_IP="${ADVERTISE_IP//./\\.}"
-URL_PATTERN="https://${ESCAPED_IP}:[0-9]+\\?fp=sha256:[0-9a-f]{64}&key=[A-Za-z0-9_-]+"
+# Match the advertised URL specifically. The authority is bracketed in internet
+# mode (`[2001:db8::1]:port`); escape regex metacharacters in the address.
+if [[ "$MODE" == "internet" ]]; then
+  ESCAPED_AUTHORITY="\\[${ADVERTISE_IP}\\]:[0-9]+"
+else
+  ESCAPED_AUTHORITY="${ADVERTISE_IP//./\\.}:[0-9]+"
+fi
+URL_PATTERN="https://${ESCAPED_AUTHORITY}\\?fp=sha256:[0-9a-f]{64}&key=[A-Za-z0-9_-]+(&mode=[a-z]+)?"
 
 for i in $(seq 1 30); do
   LOGS=$(docker logs "$CONTAINER" 2>&1)
