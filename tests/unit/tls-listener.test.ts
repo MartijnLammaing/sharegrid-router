@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { PROTOCOL_VERSION } from '@sharegrid/shared/protocol';
+import type { HostEntry } from '../../src/host-registry.js';
 import pino from 'pino';
 
 // ── Mock node:tls ─────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ const mockKeyAuthority = {
 const mockHostRegistry = {
   add: vi.fn(),
   updateHeartbeat: vi.fn(() => true),
-  list: vi.fn(() => []),
+  list: vi.fn((): HostEntry[] => []),
   evictStale: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
@@ -202,14 +203,13 @@ describe('TlsListener', () => {
 
   describe('user handshake', () => {
     it('host_list_request triggers hostRegistry.list and replies with HostListResponse', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       mockHostRegistry.list.mockReturnValue([
         {
           hostId: 'h1', modelName: 'm',
           endpoint: '10.0.0.1:9000', tlsFingerprint: 'sha256:' + 'b'.repeat(64),
-          hostKeyToken: 'tok',
+          hostKeyToken: 'tok', lastSeen: Date.now(),
         },
-      ] as any);
+      ]);
 
       const { listener, sock } = await startAndConnect();
       sock.inject({ v: PROTOCOL_VERSION, type: 'host_list_request', roleKey: USER_SECRET });

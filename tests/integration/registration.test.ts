@@ -12,7 +12,6 @@ import {
   startTestRouter,
   connectClient,
   sendMsg,
-  createReader,
   readMsg,
   makeValidRegistration,
   type TestRouter,
@@ -114,7 +113,6 @@ describe('Router integration — registration', () => {
 
   it('registration rejected when roleKey is missing — socket closed with no RegistrationAck', async () => {
     const sock = await connectClient(router.port, router.fingerprint);
-    const reader = createReader(sock);
 
     // Send a registration without roleKey
     sendMsg(sock, {
