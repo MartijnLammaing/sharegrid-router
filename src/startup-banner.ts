@@ -1,18 +1,20 @@
 /**
  * Startup banner — printed once after the router is ready.
  *
- * Enumerates non-loopback network interfaces and performs a best-effort
- * public-IP lookup. Prints candidate SHAREGRID_ROUTER_URL values so the
- * operator knows exactly what to put in each LLMHost and LLMUser env var.
+ * Advertises the router's LAN IPv4 endpoint(s) so the operator knows exactly
+ * what to put in each LLMHost and LLMUser `SHAREGRID_ROUTER_URL`. The router
+ * runs in a Docker container on a bridge network and therefore cannot see its
+ * host machine's LAN IPv4 itself; the address(es) are injected via the
+ * `SHAREGRID_LAN_IPS` env var by docker-run.sh, which detects them on the host
+ * OS. ShareGrid connects modules over the LAN using IPv4.
  *
  * console.log is the ONLY sanctioned use in src/ outside config.ts; this is
  * deliberate operator-facing output, not structured application logging.
  *
  * See: docs/architecture_llmrouter.md §7
- *      docs/implementation_plan_llmrouter.md Phase 3D task 3D-1
  */
 
-import { networkInterfaces } from 'node:os';
+const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
 export interface BannerOptions {
   listenAddr: string;
@@ -35,64 +37,31 @@ export interface BannerOptions {
  * @param opts.hostSecret  Role secret embedded in host registration URLs.
  * @param opts.userSecret  Role secret embedded in user access URLs.
  */
-export async function printStartupBanner(opts: BannerOptions): Promise<void> {
+export function printStartupBanner(opts: BannerOptions): void {
   const { listenAddr, fingerprint, hostSecret, userSecret } = opts;
 
   // Extract port from listenAddr (format: host:port).
   const lastColon = listenAddr.lastIndexOf(':');
   const port = listenAddr.slice(lastColon + 1);
 
-  const candidates: Array<{ label: string; ip: string }> = [];
-
-  // ── Public IP lookup (best-effort, 2-second timeout) ─────────────────────
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2_000);
-    try {
-      const res = await fetch('https://api.ipify.org', { signal: controller.signal });
-      const publicIp = (await res.text()).trim();
-      if (publicIp.length > 0) {
-        candidates.push({ label: 'public', ip: publicIp });
-      }
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {
-    // Non-fatal: omit the [public] line and log a warning via console.log.
-    console.log('  (public IP lookup failed or timed out — [public] line omitted)');
-  }
-
-  // ── Local interfaces ──────────────────────────────────────────────────────
-  const ifaces = networkInterfaces();
-  for (const [name, addrs] of Object.entries(ifaces)) {
-    if (addrs === undefined) continue;
-    for (const addr of addrs) {
-      // Skip loopback and IPv6 link-local.
-      if (addr.internal) continue;
-      if (addr.family !== 'IPv4') continue;
-      candidates.push({ label: name, ip: addr.address });
-    }
-  }
-
-  // ── Additional candidates from host env vars ──────────────────────────────
-  // The container can't see host network interfaces, so LAN and public IPv6
-  // addresses are injected by start-dev.sh before launching the container.
-  const lanIps = (process.env['SHAREGRID_LAN_IPS'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  // ── LAN IPv4 candidates (injected from the host OS) ───────────────────────
+  // A bridge-networked container can only see its Docker bridge IP, which is
+  // not reachable from other machines, so the host's LAN IPv4 address(es) are
+  // supplied via SHAREGRID_LAN_IPS by docker-run.sh.
+  const candidates: string[] = [];
+  const lanIps = (process.env['SHAREGRID_LAN_IPS'] ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   for (const ip of lanIps) {
-    candidates.push({ label: 'lan', ip });
-  }
-
-  const publicIpv6 = (process.env['SHAREGRID_PUBLIC_IPV6'] ?? '').trim();
-  if (publicIpv6.length > 0) {
-    candidates.push({ label: 'public-ipv6', ip: publicIpv6 });
+    if (!IPV4_REGEX.test(ip)) continue;
+    if (ip.startsWith('127.')) continue; // loopback is not reachable from other machines
+    if (!candidates.includes(ip)) candidates.push(ip);
   }
 
   // ── URL builder ───────────────────────────────────────────────────────────
-  function buildUrl(ip: string, key: string): string {
-    // IPv6 addresses (contain ':') must be wrapped in brackets per RFC 2732.
-    const host = ip.includes(':') ? `[${ip}]` : ip;
-    return `https://${host}:${port}?fp=${fingerprint}&key=${key}`;
-  }
+  const buildUrl = (host: string, key: string): string =>
+    `https://${host}:${port}?fp=${fingerprint}&key=${key}`;
 
   // ── Print banner ──────────────────────────────────────────────────────────
   console.log('');
@@ -103,7 +72,9 @@ export async function printStartupBanner(opts: BannerOptions): Promise<void> {
   console.log('');
 
   if (candidates.length === 0) {
-    console.log('  WARNING: no non-loopback interfaces found.');
+    console.log('  WARNING: no LAN IPv4 address was provided (SHAREGRID_LAN_IPS).');
+    console.log('  Falling back to the raw listen address — replace the host with this');
+    console.log("  machine's LAN IPv4 before distributing the URLs.");
     console.log('');
     console.log('  HOST REGISTRATION URLs (distribute only to host operators):');
     console.log(`    ${buildUrl(listenAddr, hostSecret)}`);
@@ -112,13 +83,13 @@ export async function printStartupBanner(opts: BannerOptions): Promise<void> {
     console.log(`    ${buildUrl(listenAddr, userSecret)}`);
   } else {
     console.log('  HOST REGISTRATION URLs (distribute only to host operators):');
-    for (const { label, ip } of candidates) {
-      console.log(`    ${buildUrl(ip, hostSecret).padEnd(80)}  [${label}]`);
+    for (const ip of candidates) {
+      console.log(`    ${buildUrl(ip, hostSecret).padEnd(80)}  [lan]`);
     }
     console.log('');
     console.log('  USER ACCESS URLs (distribute only to end users):');
-    for (const { label, ip } of candidates) {
-      console.log(`    ${buildUrl(ip, userSecret).padEnd(80)}  [${label}]`);
+    for (const ip of candidates) {
+      console.log(`    ${buildUrl(ip, userSecret).padEnd(80)}  [lan]`);
     }
   }
 
