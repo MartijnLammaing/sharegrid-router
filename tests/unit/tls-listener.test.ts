@@ -88,6 +88,7 @@ const validRegistration = {
   modelName: 'test-model',
   port: 9000,
   tlsFingerprint: 'sha256:' + 'a'.repeat(64),
+  listenHost: '192.168.1.42',
   roleKey: HOST_SECRET,
 };
 

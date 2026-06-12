@@ -23,6 +23,7 @@ LLMHost <═══════════════════════�
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `SHAREGRID_LISTEN_ADDR` | Yes | — | `host:port` to bind the TLS listener (e.g. `0.0.0.0:8443`) |
+| `SHAREGRID_LAN_IPS` | No | — | Comma-separated LAN IPv4 address(es) to advertise in the startup-banner URLs. A bridge-networked container cannot detect the host LAN IP itself; `docker-run.sh` auto-detects and injects it. |
 | `SHAREGRID_HEARTBEAT_TIMEOUT` | No | `90` | Seconds before a host without a heartbeat is evicted |
 
 ## Running with Docker
@@ -36,7 +37,7 @@ docker run \
 
 On first start, a self-signed TLS cert is generated and written to `/data/certs/`. Mount a volume there to keep the fingerprint stable across container restarts.
 
-On startup, the router prints all candidate `SHAREGRID_ROUTER_URL` values (local interfaces + best-effort public IP). Copy the appropriate URL and set it as `SHAREGRID_ROUTER_URL` on your hosts and users.
+On startup, the router prints `SHAREGRID_ROUTER_URL` values built from its LAN IPv4 address. ShareGrid connects modules over the LAN using IPv4, so the URLs embed the host machine's LAN IPv4 (injected via `SHAREGRID_LAN_IPS`). Copy the appropriate URL and set it as `SHAREGRID_ROUTER_URL` on your hosts and users. Prefer `docker-run.sh`, which auto-detects the LAN IP for you.
 
 See `docker-run.example.sh` for a full example with recommended flags.
 

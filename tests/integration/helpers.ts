@@ -158,6 +158,7 @@ export function makeValidRegistration(hostSecret: string) {
     contextSize: 4096,
     port: 9000,
     tlsFingerprint: 'sha256:' + 'a'.repeat(64),
+    listenHost: '192.168.1.42',
     roleKey: hostSecret,
   } as const;
 }

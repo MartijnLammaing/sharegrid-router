@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   await tlsListener.start();
 
   // 7. Startup banner — printed to stdout for the operator.
-  await printStartupBanner({
+  printStartupBanner({
     listenAddr: config.SHAREGRID_LISTEN_ADDR,
     fingerprint,
     hostSecret: keyAuthority.getHostSecret(),
