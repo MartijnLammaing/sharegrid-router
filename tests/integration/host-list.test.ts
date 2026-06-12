@@ -84,9 +84,11 @@ describe('Router integration — host list', () => {
     const userSock = await connectClient(router.port, router.fingerprint);
     sendMsg(userSock, { v: PROTOCOL_VERSION, type: 'host_list_request' /* no roleKey */ });
 
+    // Wait for 'close' (not 'end'): 'end' fires when the FIN arrives but the
+    // socket is not yet destroyed, so asserting on it races the teardown.
     await new Promise<void>((resolve) => {
-      userSock.once('close', resolve);
-      userSock.once('end', resolve);
+      if (userSock.destroyed) { resolve(); return; }
+      userSock.once('close', () => resolve());
       setTimeout(resolve, 1_000);
     });
 
@@ -102,9 +104,11 @@ describe('Router integration — host list', () => {
       roleKey: router.hostSecret, // wrong role
     });
 
+    // Wait for 'close' (not 'end'): 'end' fires when the FIN arrives but the
+    // socket is not yet destroyed, so asserting on it races the teardown.
     await new Promise<void>((resolve) => {
-      userSock.once('close', resolve);
-      userSock.once('end', resolve);
+      if (userSock.destroyed) { resolve(); return; }
+      userSock.once('close', () => resolve());
       setTimeout(resolve, 1_000);
     });
 
