@@ -74,6 +74,26 @@ describe('HostRegistry', () => {
     });
   });
 
+  describe('remove', () => {
+    it('removes an existing host from the registry', () => {
+      const reg = createHostRegistry({ config: makeConfig(), logger });
+      reg.add(makeEntry({ hostId: 'host-1' }));
+      reg.add(makeEntry({ hostId: 'host-2' }));
+
+      reg.remove('host-1');
+
+      expect(reg.list().map((h) => h.hostId)).toEqual(['host-2']);
+    });
+
+    it('is a no-op for an unknown hostId', () => {
+      const reg = createHostRegistry({ config: makeConfig(), logger });
+      reg.add(makeEntry({ hostId: 'host-1' }));
+
+      expect(() => reg.remove('unknown')).not.toThrow();
+      expect(reg.list()).toHaveLength(1);
+    });
+  });
+
   describe('evictStale', () => {
     it('removes hosts whose lastSeen exceeds the heartbeat timeout', () => {
       const reg = createHostRegistry({ config: makeConfig(90), logger });

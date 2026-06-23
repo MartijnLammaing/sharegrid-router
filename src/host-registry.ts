@@ -50,6 +50,11 @@ export interface HostRegistry {
   /** All non-evicted entries projected to the wire-format shape. */
   list(): HostListEntry[];
   /**
+   * Remove a specific host immediately (e.g. on TCP disconnect).
+   * No-op if the host is not in the registry.
+   */
+  remove(hostId: string): void;
+  /**
    * Remove entries whose `lastSeen` is older than `now - heartbeatTimeoutMs`.
    * Returns the list of evicted `hostId`s for logging.
    */
@@ -102,6 +107,12 @@ export function createHostRegistry(deps: HostRegistryDeps): HostRegistry {
           hostKeyToken: e.hostKeyToken,
         }),
       );
+    },
+
+    remove(hostId: string): void {
+      if (entries.delete(hostId)) {
+        log.info({ hostId }, 'host removed from registry on disconnect');
+      }
     },
 
     evictStale(now: number): string[] {

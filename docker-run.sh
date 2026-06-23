@@ -70,7 +70,7 @@ detect_global_ipv6() {
       ifconfig 2>/dev/null | awk '
         /inet6 / {
           ip=$2; sub(/%.*/,"",ip);
-          if (ip !~ /^fe80/ && ip != "::1" && ip !~ /^f[cd]/) { print ip; exit }
+          if (ip !~ /^fe[89ab]/ && ip != "::1" && ip !~ /^f[cd]/) { print ip; exit }
         }'
       ;;
     *)
@@ -116,7 +116,7 @@ docker rm -f "$CONTAINER" 2>/dev/null || true
 log "Starting ${CONTAINER} (mode=${MODE}, advertising ${ADVERTISE_IP} on port ${PORT})..."
 docker run -d \
   --name "$CONTAINER" \
-  -p "${PORT}:${PORT}" \
+  -p "$( [[ "$MODE" == "internet" ]] && echo "[::]:${PORT}:${PORT}" || echo "${PORT}:${PORT}" )" \
   -e SHAREGRID_LISTEN_ADDR="$LISTEN_ADDR" \
   -e SHAREGRID_NETWORK_MODE="$MODE" \
   -e SHAREGRID_LAN_IPS="$ADVERTISE_IP" \
