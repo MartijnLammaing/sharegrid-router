@@ -66,6 +66,7 @@ const mockKeyAuthority = {
 
 const mockHostRegistry = {
   add: vi.fn(),
+  remove: vi.fn(),
   updateHeartbeat: vi.fn(() => true),
   list: vi.fn((): HostEntry[] => []),
   evictStale: vi.fn(),
@@ -159,6 +160,25 @@ describe('TlsListener', () => {
 
       expect(mockHostRegistry.add).not.toHaveBeenCalled();
       expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+  });
+
+  describe('host disconnect', () => {
+    it('calls hostRegistry.remove with the hostId when the host socket closes', async () => {
+      const { listener, sock } = await startAndConnect();
+
+      sock.inject(validRegistration);
+      await new Promise((r) => setTimeout(r, 10));
+
+      const addedEntry = mockHostRegistry.add.mock.calls[0]![0] as Record<string, unknown>;
+      const hostId = addedEntry['hostId'] as string;
+
+      sock.emit('close');
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(mockHostRegistry.remove).toHaveBeenCalledWith(hostId);
 
       await listener.stop();
     });

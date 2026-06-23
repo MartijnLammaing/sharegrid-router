@@ -157,7 +157,10 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
     });
 
     sock.on('close', () => {
-      // No explicit registry change on close — the eviction loop handles it.
+      // Remove immediately on disconnect so a restarted host's new entry
+      // (with a fresh TLS cert) is not shadowed by this stale entry.
+      // The eviction loop remains a safety net for connections lost silently.
+      hostRegistry.remove(hostId);
       log.info({ hostId }, 'host connection closed');
     });
 
