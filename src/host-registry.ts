@@ -31,6 +31,12 @@ export interface HostEntry {
   tlsFingerprint: string;
   /** Current signed token issued by the Key Authority. */
   hostKeyToken: string;
+  /** Llama.cpp context size (tokens), received at registration. */
+  contextSize: number;
+  /** Max concurrent sessions the host will accept (1–32). */
+  maxSessions: number;
+  /** Currently occupied slot count (starts at 0; updated by heartbeats + status updates). */
+  activeSessions: number;
   /** Unix epoch milliseconds of the most recent heartbeat (or registration). */
   lastSeen: number;
 }
@@ -43,10 +49,17 @@ export interface HostRegistryDeps {
 export interface HostRegistry {
   add(entry: HostEntry): void;
   /**
-   * Update `lastSeen` and replace `hostKeyToken` for an existing host.
+   * Update `lastSeen`, replace `hostKeyToken`, and store the current
+   * `activeSessions` count for an existing host.
    * Returns `false` if the host is unknown (caller treats this as an error).
    */
-  updateHeartbeat(hostId: string, newToken: string, now: number): boolean;
+  updateHeartbeat(hostId: string, newToken: string, activeSessions: number, now: number): boolean;
+  /**
+   * Store an immediate availability update (`activeSessions`) without refreshing
+   * `lastSeen` — status updates are not heartbeats.
+   * Returns `false` if the host is unknown.
+   */
+  updateStatus(hostId: string, activeSessions: number): boolean;
   /** All non-evicted entries projected to the wire-format shape. */
   list(): HostListEntry[];
   /**
@@ -86,14 +99,25 @@ export function createHostRegistry(deps: HostRegistryDeps): HostRegistry {
       log.info({ hostId: entry.hostId, modelName: entry.modelName }, 'host added to registry');
     },
 
-    updateHeartbeat(hostId: string, newToken: string, now: number): boolean {
+    updateHeartbeat(hostId: string, newToken: string, activeSessions: number, now: number): boolean {
       const entry = entries.get(hostId);
       if (entry === undefined) {
         log.warn({ hostId }, 'heartbeat for unknown host');
         return false;
       }
       entry.hostKeyToken = newToken;
+      entry.activeSessions = activeSessions;
       entry.lastSeen = now;
+      return true;
+    },
+
+    updateStatus(hostId: string, activeSessions: number): boolean {
+      const entry = entries.get(hostId);
+      if (entry === undefined) {
+        log.warn({ hostId }, 'status update for unknown host');
+        return false;
+      }
+      entry.activeSessions = activeSessions;
       return true;
     },
 
@@ -105,6 +129,9 @@ export function createHostRegistry(deps: HostRegistryDeps): HostRegistry {
           endpoint: e.endpoint,
           tlsFingerprint: e.tlsFingerprint,
           hostKeyToken: e.hostKeyToken,
+          contextSize: e.contextSize,
+          availableSlots: Math.max(0, e.maxSessions - e.activeSessions),
+          totalSlots: e.maxSessions,
         }),
       );
     },

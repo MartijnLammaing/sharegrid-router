@@ -21,6 +21,9 @@ function makeEntry(overrides: Partial<HostEntry> = {}): HostEntry {
     endpoint: '10.0.0.1:9000',
     tlsFingerprint: 'sha256:' + 'a'.repeat(64),
     hostKeyToken: 'token-1',
+    contextSize: 4096,
+    maxSessions: 4,
+    activeSessions: 0,
     lastSeen: Date.now(),
     ...overrides,
   };
@@ -42,6 +45,9 @@ describe('HostRegistry', () => {
       expect(list).toHaveLength(1);
       expect(list[0]!.hostId).toBe('host-1');
       expect(list[0]!.hostKeyToken).toBe('tok-1');
+      expect(list[0]!.contextSize).toBe(4096);
+      expect(list[0]!.totalSlots).toBe(4);
+      expect(list[0]!.availableSlots).toBe(4);
       // lastSeen must NOT appear in the wire-format list
       expect(Object.keys(list[0]!)).not.toContain('lastSeen');
     });
@@ -55,22 +61,76 @@ describe('HostRegistry', () => {
   });
 
   describe('updateHeartbeat', () => {
-    it('updates lastSeen and replaces hostKeyToken', () => {
+    it('updates lastSeen, replaces hostKeyToken, and stores activeSessions', () => {
       const reg = createHostRegistry({ config: makeConfig(), logger });
-      const entry = makeEntry({ lastSeen: 1000, hostKeyToken: 'old-token' });
+      const entry = makeEntry({ lastSeen: 1000, hostKeyToken: 'old-token', activeSessions: 0 });
       reg.add(entry);
 
       const now = 2000;
-      const result = reg.updateHeartbeat('host-1', 'new-token', now);
+      const result = reg.updateHeartbeat('host-1', 'new-token', 2, now);
 
       expect(result).toBe(true);
-      // Verify via list — new token should be reflected
+      // Verify via list — new token and activeSessions should be reflected
       expect(reg.list()[0]!.hostKeyToken).toBe('new-token');
+      expect(reg.list()[0]!.availableSlots).toBe(2); // maxSessions 4 - activeSessions 2
     });
 
     it('returns false for an unknown hostId', () => {
       const reg = createHostRegistry({ config: makeConfig(), logger });
-      expect(reg.updateHeartbeat('unknown-host', 'tok', Date.now())).toBe(false);
+      expect(reg.updateHeartbeat('unknown-host', 'tok', 0, Date.now())).toBe(false);
+    });
+  });
+
+  describe('updateStatus', () => {
+    it('updates activeSessions and returns true', () => {
+      const reg = createHostRegistry({ config: makeConfig(), logger });
+      reg.add(makeEntry({ hostId: 'host-1', maxSessions: 4, activeSessions: 0 }));
+
+      const result = reg.updateStatus('host-1', 3);
+
+      expect(result).toBe(true);
+      expect(reg.list()[0]!.availableSlots).toBe(1); // 4 - 3
+    });
+
+    it('does NOT update lastSeen (status updates are not heartbeats)', () => {
+      const reg = createHostRegistry({ config: makeConfig(), logger });
+      reg.add(makeEntry({ hostId: 'host-1', lastSeen: 1000, activeSessions: 0 }));
+
+      reg.updateStatus('host-1', 2);
+
+      // The entry should still be evictable based on the original lastSeen.
+      // Advance time well past the heartbeat timeout; the host should be evicted
+      // even though a status update just succeeded.
+      const evicted = reg.evictStale(1000 + 91_000);
+      expect(evicted).toEqual(['host-1']);
+    });
+
+    it('returns false for an unknown hostId', () => {
+      const reg = createHostRegistry({ config: makeConfig(), logger });
+      expect(reg.updateStatus('unknown-host', 1)).toBe(false);
+    });
+  });
+
+  describe('list — availability computation', () => {
+    it('computes availableSlots = maxSessions - activeSessions', () => {
+      const reg = createHostRegistry({ config: makeConfig(), logger });
+      reg.add(makeEntry({ hostId: 'h', maxSessions: 2, activeSessions: 1, contextSize: 8192 }));
+      const entry = reg.list()[0]!;
+      expect(entry.availableSlots).toBe(1);
+      expect(entry.totalSlots).toBe(2);
+      expect(entry.contextSize).toBe(8192);
+    });
+
+    it('full host (activeSessions === maxSessions) → availableSlots: 0', () => {
+      const reg = createHostRegistry({ config: makeConfig(), logger });
+      reg.add(makeEntry({ hostId: 'h', maxSessions: 2, activeSessions: 2 }));
+      expect(reg.list()[0]!.availableSlots).toBe(0);
+    });
+
+    it('over-full host (activeSessions > maxSessions) → availableSlots clamped to 0', () => {
+      const reg = createHostRegistry({ config: makeConfig(), logger });
+      reg.add(makeEntry({ hostId: 'h', maxSessions: 2, activeSessions: 5 }));
+      expect(reg.list()[0]!.availableSlots).toBe(0);
     });
   });
 

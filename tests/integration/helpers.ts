@@ -157,6 +157,7 @@ export function makeValidRegistration(hostSecret: string) {
     type: 'register',
     modelName: 'test-model',
     contextSize: 4096,
+    maxSessions: 4,
     port: 9000,
     tlsFingerprint: 'sha256:' + 'a'.repeat(64),
     listenHost: '192.168.1.42',
