@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { PROTOCOL_VERSION } from '@sharegrid/shared/protocol';
-import type { HostEntry } from '../../src/host-registry.js';
+import type { HostListEntry } from '@sharegrid/shared/protocol';
 import pino from 'pino';
 
 // ── Mock node:tls ─────────────────────────────────────────────────────────────
@@ -68,7 +68,8 @@ const mockHostRegistry = {
   add: vi.fn(),
   remove: vi.fn(),
   updateHeartbeat: vi.fn(() => true),
-  list: vi.fn((): HostEntry[] => []),
+  updateStatus: vi.fn(() => true),
+  list: vi.fn((): HostListEntry[] => []),
   evictStale: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
@@ -92,6 +93,8 @@ const validRegistration = {
   port: 9000,
   tlsFingerprint: 'sha256:' + 'a'.repeat(64),
   listenHost: '192.168.1.42',
+  contextSize: 4096,
+  maxSessions: 4,
   roleKey: HOST_SECRET,
 };
 
@@ -152,10 +155,28 @@ describe('TlsListener', () => {
       ['modelName missing', { ...validRegistration, modelName: '' }],
       ['port out of range', { ...validRegistration, port: 0 }],
       ['tlsFingerprint invalid', { ...validRegistration, tlsFingerprint: 'invalid' }],
+      ['contextSize not a positive integer', { ...validRegistration, contextSize: 0 }],
+      ['maxSessions below range', { ...validRegistration, maxSessions: 0 }],
+      ['maxSessions above range', { ...validRegistration, maxSessions: 33 }],
     ])('invalid registration field — %s — closes without adding to registry', async (_, payload) => {
       const { listener, sock } = await startAndConnect();
 
       sock.inject(payload);
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.add).not.toHaveBeenCalled();
+      expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+
+    it('missing contextSize or maxSessions closes without adding to registry', async () => {
+      const { listener, sock } = await startAndConnect();
+      const { contextSize: _omitCtx, maxSessions: _omitMax, ...missingFields } = validRegistration;
+      void _omitCtx;
+      void _omitMax;
+
+      sock.inject(missingFields);
       await new Promise((r) => setTimeout(r, 10));
 
       expect(mockHostRegistry.add).not.toHaveBeenCalled();
@@ -179,6 +200,82 @@ describe('TlsListener', () => {
       await new Promise((r) => setTimeout(r, 0));
 
       expect(mockHostRegistry.remove).toHaveBeenCalledWith(hostId);
+
+      await listener.stop();
+    });
+  });
+
+  describe('host messages after registration', () => {
+    async function registerAndGetHostId() {
+      const { listener, sock } = await startAndConnect();
+      sock.inject(validRegistration);
+      await new Promise((r) => setTimeout(r, 10));
+      const hostId = (mockHostRegistry.add.mock.calls[0]![0] as Record<string, unknown>)['hostId'] as string;
+      return { listener, sock, hostId };
+    }
+
+    it('heartbeat with activeSessions passes the value to updateHeartbeat', async () => {
+      const { listener, sock, hostId } = await registerAndGetHostId();
+
+      sock.inject({ v: PROTOCOL_VERSION, type: 'heartbeat', hostId, activeSessions: 2 });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.updateHeartbeat).toHaveBeenCalledWith(
+        hostId, expect.any(String), 2, expect.any(Number),
+      );
+      // heartbeat_ack is sent with a fresh token
+      const ack = sock.messages().find((m) => m['type'] === 'heartbeat_ack');
+      expect(ack).toBeDefined();
+      expect(ack!['hostKeyToken']).toBe('mock-token');
+
+      await listener.stop();
+    });
+
+    it('host_status_update calls updateStatus with the activeSessions value', async () => {
+      const { listener, sock, hostId } = await registerAndGetHostId();
+
+      sock.inject({ v: PROTOCOL_VERSION, type: 'host_status_update', hostId, activeSessions: 1 });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.updateStatus).toHaveBeenCalledWith(hostId, 1);
+      // status updates do NOT issue a new token (no heartbeat_ack)
+      expect(mockHostRegistry.updateHeartbeat).not.toHaveBeenCalled();
+      expect(sock.destroyed).toBe(false);
+
+      await listener.stop();
+    });
+
+    it('host_status_update with wrong hostId closes the connection', async () => {
+      const { listener, sock } = await registerAndGetHostId();
+
+      sock.inject({ v: PROTOCOL_VERSION, type: 'host_status_update', hostId: 'wrong-host', activeSessions: 1 });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.updateStatus).not.toHaveBeenCalled();
+      expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+
+    it('host_status_update with non-integer activeSessions closes the connection', async () => {
+      const { listener, sock, hostId } = await registerAndGetHostId();
+
+      sock.inject({ v: PROTOCOL_VERSION, type: 'host_status_update', hostId, activeSessions: 1.5 });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockHostRegistry.updateStatus).not.toHaveBeenCalled();
+      expect(sock.destroyed).toBe(true);
+
+      await listener.stop();
+    });
+
+    it('unknown message type after registration closes the connection', async () => {
+      const { listener, sock, hostId } = await registerAndGetHostId();
+
+      sock.inject({ v: PROTOCOL_VERSION, type: 'mystery', hostId });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(sock.destroyed).toBe(true);
 
       await listener.stop();
     });
@@ -227,7 +324,8 @@ describe('TlsListener', () => {
         {
           hostId: 'h1', modelName: 'm',
           endpoint: '10.0.0.1:9000', tlsFingerprint: 'sha256:' + 'b'.repeat(64),
-          hostKeyToken: 'tok', lastSeen: Date.now(),
+          hostKeyToken: 'tok',
+          contextSize: 4096, availableSlots: 2, totalSlots: 4,
         },
       ]);
 
@@ -240,6 +338,12 @@ describe('TlsListener', () => {
       expect(response['type']).toBe('host_list_response');
       expect(Array.isArray(response['hosts'])).toBe(true);
       expect((response['hosts'] as unknown[]).length).toBe(1);
+
+      // New availability fields are surfaced to users
+      const host = (response['hosts'] as Array<Record<string, unknown>>)[0]!;
+      expect(host['contextSize']).toBe(4096);
+      expect(host['availableSlots']).toBe(2);
+      expect(host['totalSlots']).toBe(4);
 
       // Router closes the connection after replying
       expect(sock.destroyed).toBe(true);

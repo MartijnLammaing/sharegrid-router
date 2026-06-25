@@ -60,6 +60,10 @@ describe('Router integration — host list', () => {
         expect(typeof h.endpoint).toBe('string');
         expect(typeof h.tlsFingerprint).toBe('string');
         expect(typeof h.hostKeyToken).toBe('string');
+        // Phase 3 availability fields
+        expect(typeof h.contextSize).toBe('number');
+        expect(typeof h.availableSlots).toBe('number');
+        expect(typeof h.totalSlots).toBe('number');
         // lastSeen must NOT be exposed to users
         expect(Object.keys(h)).not.toContain('lastSeen');
       }
@@ -114,5 +118,46 @@ describe('Router integration — host list', () => {
 
     expect(userSock.destroyed).toBe(true);
     userSock.destroy();
+  });
+
+  // ── Phase 3: host_status_update → availability in host list ───────────────
+
+  it('host_status_update is reflected as availableSlots in the host list', async () => {
+    const hostSock = await connectClient(router.port, router.fingerprint);
+    try {
+      // Register with maxSessions: 2 (activeSessions starts at 0)
+      sendMsg(hostSock, { ...makeValidRegistration(router.hostSecret), maxSessions: 2 });
+      const ack = await readMsg(hostSock) as unknown as RegistrationAck;
+      const hostId = ack.hostId;
+
+      // A status update with activeSessions: 1 → user should see availableSlots: 1
+      sendMsg(hostSock, { v: PROTOCOL_VERSION, type: 'host_status_update', hostId, activeSessions: 1 });
+      await new Promise((r) => setTimeout(r, 20));
+
+      const userSock1 = await connectClient(router.port, router.fingerprint);
+      sendMsg(userSock1, { v: PROTOCOL_VERSION, type: 'host_list_request', roleKey: router.userSecret });
+      const response1 = await readMsg(userSock1) as unknown as HostListResponse;
+      userSock1.destroy();
+
+      const entry1 = response1.hosts.find((h) => h.hostId === hostId)!;
+      expect(entry1).toBeDefined();
+      expect(entry1.totalSlots).toBe(2);
+      expect(entry1.availableSlots).toBe(1);
+
+      // A status update with activeSessions: 2 → user should see availableSlots: 0
+      sendMsg(hostSock, { v: PROTOCOL_VERSION, type: 'host_status_update', hostId, activeSessions: 2 });
+      await new Promise((r) => setTimeout(r, 20));
+
+      const userSock2 = await connectClient(router.port, router.fingerprint);
+      sendMsg(userSock2, { v: PROTOCOL_VERSION, type: 'host_list_request', roleKey: router.userSecret });
+      const response2 = await readMsg(userSock2) as unknown as HostListResponse;
+      userSock2.destroy();
+
+      const entry2 = response2.hosts.find((h) => h.hostId === hostId)!;
+      expect(entry2).toBeDefined();
+      expect(entry2.availableSlots).toBe(0);
+    } finally {
+      hostSock.destroy();
+    }
   });
 });

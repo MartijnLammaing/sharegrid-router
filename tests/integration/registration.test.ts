@@ -89,7 +89,7 @@ describe('Router integration — registration', () => {
       await new Promise((r) => setTimeout(r, 5));
 
       // Send heartbeat
-      sendMsg(sock, { v: PROTOCOL_VERSION, type: 'heartbeat', hostId: ack.hostId });
+      sendMsg(sock, { v: PROTOCOL_VERSION, type: 'heartbeat', hostId: ack.hostId, activeSessions: 0 });
       const heartbeatAck = await readMsg(sock) as unknown as HeartbeatAck;
 
       expect(heartbeatAck.type).toBe('heartbeat_ack');
@@ -161,7 +161,7 @@ describe('Router integration — registration', () => {
       sendMsg(sock, makeValidRegistration(router.hostSecret));
       const ack = await readMsg(sock) as unknown as RegistrationAck;
 
-      sendMsg(sock, { v: PROTOCOL_VERSION, type: 'heartbeat', hostId: ack.hostId });
+      sendMsg(sock, { v: PROTOCOL_VERSION, type: 'heartbeat', hostId: ack.hostId, activeSessions: 0 });
       await readMsg(sock); // consume HeartbeatAck
 
       // Host should still be in the registry

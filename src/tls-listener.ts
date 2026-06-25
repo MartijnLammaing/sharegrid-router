@@ -24,6 +24,7 @@ import {
   type HeartbeatAck,
   type HostListRequest,
   type HostListResponse,
+  type HostStatusUpdate,
 } from '@sharegrid/shared/protocol';
 import { FINGERPRINT_REGEX, formatEndpoint } from '@sharegrid/shared/tls';
 import type { KeyAuthority } from './key-authority.js';
@@ -96,7 +97,14 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
       typeof msg['tlsFingerprint'] === 'string' &&
       FINGERPRINT_REGEX.test(msg['tlsFingerprint']) &&
       typeof msg['listenHost'] === 'string' &&
-      msg['listenHost'].length > 0
+      msg['listenHost'].length > 0 &&
+      typeof msg['contextSize'] === 'number' &&
+      Number.isInteger(msg['contextSize']) &&
+      msg['contextSize'] > 0 &&
+      typeof msg['maxSessions'] === 'number' &&
+      Number.isInteger(msg['maxSessions']) &&
+      msg['maxSessions'] >= 1 &&
+      msg['maxSessions'] <= 32
     );
   }
 
@@ -122,6 +130,9 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
       endpoint,
       tlsFingerprint: registration.tlsFingerprint,
       hostKeyToken: token,
+      contextSize: registration.contextSize,
+      maxSessions: registration.maxSessions,
+      activeSessions: 0,
       lastSeen: Date.now(),
     };
     hostRegistry.add(entry);
@@ -152,7 +163,7 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
         const line = buf.slice(0, nl).trim();
         buf = buf.slice(nl + 1);
         if (line.length === 0) continue;
-        handleHeartbeat(line, hostId, sock);
+        handleHostMessage(line, hostId, sock);
       }
     });
 
@@ -169,12 +180,12 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
     });
   }
 
-  function handleHeartbeat(line: string, hostId: string, sock: TLSSocket): void {
+  function handleHostMessage(line: string, hostId: string, sock: TLSSocket): void {
     let raw: unknown;
     try {
       raw = JSON.parse(line);
     } catch {
-      log.warn({ hostId }, 'non-JSON heartbeat line; closing');
+      log.warn({ hostId }, 'non-JSON host message line; closing');
       sock.destroy();
       return;
     }
@@ -184,46 +195,66 @@ export function createTlsListener(deps: TlsListenerDeps): TlsListener {
       raw === null ||
       (raw as Record<string, unknown>)['v'] !== PROTOCOL_VERSION
     ) {
-      log.warn({ hostId }, 'unexpected protocol version in heartbeat; closing');
+      log.warn({ hostId }, 'unexpected protocol version in host message; closing');
       sock.destroy();
       return;
     }
 
     const msg = raw as Record<string, unknown>;
-    if (msg['type'] !== 'heartbeat') {
-      log.warn({ hostId, type: msg['type'] }, 'unexpected message type after registration; closing');
+    const type = msg['type'];
+
+    if (type === 'heartbeat') {
+      const hb = msg as unknown as HeartbeatPayload;
+      if (hb.hostId !== hostId) {
+        log.warn({ expected: hostId, got: hb.hostId }, 'heartbeat hostId mismatch; closing');
+        sock.destroy();
+        return;
+      }
+      if (!Number.isInteger(hb.activeSessions) || hb.activeSessions < 0) {
+        log.warn({ hostId }, 'heartbeat activeSessions invalid; closing');
+        sock.destroy();
+        return;
+      }
+
+      const now = Date.now();
+      const newToken = keyAuthority.issueHostKeyToken(
+        hostId,
+        // We need the fingerprint for the new token. Re-use the one in the registry entry.
+        // The registry's hostKeyToken payload contains it, but it's simpler to look up
+        // the entry directly.
+        getHostFingerprint(hostId),
+        tokenTtlMs,
+      );
+
+      const updated = hostRegistry.updateHeartbeat(hostId, newToken, hb.activeSessions, now);
+      if (!updated) {
+        // Host was evicted while the connection was open (e.g. missed many beats).
+        log.warn({ hostId }, 'heartbeat for evicted host; closing connection');
+        sock.destroy();
+        return;
+      }
+
+      const ack: HeartbeatAck = { v: PROTOCOL_VERSION, type: 'heartbeat_ack', hostKeyToken: newToken };
+      writeMessage(sock, ack);
+      log.debug({ hostId, activeSessions: hb.activeSessions }, 'heartbeat acknowledged');
+    } else if (type === 'host_status_update') {
+      const upd = msg as unknown as HostStatusUpdate;
+      if (upd.hostId !== hostId) {
+        log.warn({ expected: hostId, got: upd.hostId }, 'host_status_update hostId mismatch; closing');
+        sock.destroy();
+        return;
+      }
+      if (!Number.isInteger(upd.activeSessions) || upd.activeSessions < 0) {
+        log.warn({ hostId }, 'host_status_update activeSessions invalid; closing');
+        sock.destroy();
+        return;
+      }
+      hostRegistry.updateStatus(hostId, upd.activeSessions);
+      log.debug({ hostId, activeSessions: upd.activeSessions }, 'host status updated');
+    } else {
+      log.warn({ hostId, type }, 'unexpected message type after registration; closing');
       sock.destroy();
-      return;
     }
-
-    const hb = msg as unknown as HeartbeatPayload;
-    if (hb.hostId !== hostId) {
-      log.warn({ expected: hostId, got: hb.hostId }, 'heartbeat hostId mismatch; closing');
-      sock.destroy();
-      return;
-    }
-
-    const now = Date.now();
-    const newToken = keyAuthority.issueHostKeyToken(
-      hostId,
-      // We need the fingerprint for the new token. Re-use the one in the registry entry.
-      // The registry's hostKeyToken payload contains it, but it's simpler to look up
-      // the entry directly.
-      getHostFingerprint(hostId),
-      tokenTtlMs,
-    );
-
-    const updated = hostRegistry.updateHeartbeat(hostId, newToken, now);
-    if (!updated) {
-      // Host was evicted while the connection was open (e.g. missed many beats).
-      log.warn({ hostId }, 'heartbeat for evicted host; closing connection');
-      sock.destroy();
-      return;
-    }
-
-    const ack: HeartbeatAck = { v: PROTOCOL_VERSION, type: 'heartbeat_ack', hostKeyToken: newToken };
-    writeMessage(sock, ack);
-    log.debug({ hostId }, 'heartbeat acknowledged');
   }
 
   // The registry stores the token but not the fingerprint separately. We decode
