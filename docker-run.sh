@@ -125,40 +125,34 @@ docker run -d \
 # ── Extract URLs ──────────────────────────────────────────────────────────────
 
 log "Waiting for router startup banner..."
-HOST_URL=""
-USER_URL=""
-# Match the advertised URL specifically. The authority is bracketed in internet
-# mode (`[2001:db8::1]:port`); escape regex metacharacters in the address.
-if [[ "$MODE" == "internet" ]]; then
-  ESCAPED_AUTHORITY="\\[${ADVERTISE_IP}\\]:[0-9]+"
-else
-  ESCAPED_AUTHORITY="${ADVERTISE_IP//./\\.}:[0-9]+"
-fi
-URL_PATTERN="https://${ESCAPED_AUTHORITY}\\?fp=sha256:[0-9a-f]{64}&key=[A-Za-z0-9_-]+(&mode=[a-z]+)?"
+HOST_TOKEN=""
+USER_TOKEN=""
 
 for i in $(seq 1 30); do
   LOGS=$(docker logs "$CONTAINER" 2>&1)
 
-  HOST_URL=$(echo "$LOGS" \
+  HOST_TOKEN=$(echo "$LOGS" \
     | grep -A 20 "HOST REGISTRATION URLs" \
-    | grep -m 1 -oE "$URL_PATTERN" || true)
+    | grep -m 1 "Token:" \
+    | sed 's/.*Token: //')
 
-  USER_URL=$(echo "$LOGS" \
+  USER_TOKEN=$(echo "$LOGS" \
     | grep -A 20 "USER ACCESS URLs" \
-    | grep -m 1 -oE "$URL_PATTERN" || true)
+    | grep -m 1 "Token:" \
+    | sed 's/.*Token: //')
 
-  if [[ -n "$HOST_URL" && -n "$USER_URL" ]]; then
+  if [[ -n "$HOST_TOKEN" && -n "$USER_TOKEN" ]]; then
     break
   fi
   sleep 1
 done
 
-if [[ -z "$HOST_URL" || -z "$USER_URL" ]]; then
-  log "ERROR: Router did not produce both startup URLs within 30s."
+if [[ -z "$HOST_TOKEN" || -z "$USER_TOKEN" ]]; then
+  log "ERROR: Router did not produce both startup tokens within 30s."
   log "Router logs:"
   docker logs "$CONTAINER" 2>&1 || true
   exit 1
 fi
 
-echo "SHAREGRID_HOST_ROUTER_URL=${HOST_URL}"
-echo "SHAREGRID_USER_ROUTER_URL=${USER_URL}"
+echo "SHAREGRID_HOST_ROUTER_URL=${HOST_TOKEN}"
+echo "SHAREGRID_USER_ROUTER_URL=${USER_TOKEN}"

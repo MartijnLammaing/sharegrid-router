@@ -95,6 +95,11 @@ export function printStartupBanner(opts: BannerOptions): void {
   const buildUrl = (host: string, key: string): string =>
     `https://${formatEndpoint(host, Number(port))}?fp=${fingerprint}&key=${key}${modeSuffix}`;
 
+  // ── Base64 encoder ────────────────────────────────────────────────────────
+  // Encode a URL to a single-line, copy-paste-safe base64 token.
+  const toBase64Token = (url: string): string =>
+    Buffer.from(url, 'utf-8').toString('base64');
+
   // ── Print banner ──────────────────────────────────────────────────────────
   console.log('');
   console.log('LLMRouter started.');
@@ -114,19 +119,27 @@ export function printStartupBanner(opts: BannerOptions): void {
     console.log(`  machine's ${family} address before distributing the URLs.`);
     console.log('');
     console.log('  HOST REGISTRATION URLs (distribute only to host operators):');
-    console.log(`    ${rawUrl(hostSecret)}`);
+    const hostUrl = rawUrl(hostSecret);
+    console.log(`    ${hostUrl}`);
+    console.log(`    Token: ${toBase64Token(hostUrl)}`);
     console.log('');
     console.log('  USER ACCESS URLs (distribute only to end users):');
-    console.log(`    ${rawUrl(userSecret)}`);
+    const userUrl = rawUrl(userSecret);
+    console.log(`    ${userUrl}`);
+    console.log(`    Token: ${toBase64Token(userUrl)}`);
   } else {
     console.log('  HOST REGISTRATION URLs (distribute only to host operators):');
     for (const ip of candidates) {
-      console.log(`    ${buildUrl(ip, hostSecret).padEnd(80)}  ${tag}`);
+      const url = buildUrl(ip, hostSecret);
+      console.log(`    ${url.padEnd(80)}  ${tag}`);
+      console.log(`    Token: ${toBase64Token(url)}`);
     }
     console.log('');
     console.log('  USER ACCESS URLs (distribute only to end users):');
     for (const ip of candidates) {
-      console.log(`    ${buildUrl(ip, userSecret).padEnd(80)}  ${tag}`);
+      const url = buildUrl(ip, userSecret);
+      console.log(`    ${url.padEnd(80)}  ${tag}`);
+      console.log(`    Token: ${toBase64Token(url)}`);
     }
   }
 
