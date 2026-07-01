@@ -134,12 +134,12 @@ for i in $(seq 1 30); do
   HOST_TOKEN=$(echo "$LOGS" \
     | grep -A 20 "HOST REGISTRATION URLs" \
     | grep -m 1 "Token:" \
-    | sed 's/.*Token: //')
+    | sed 's/.*Token: //' || true)
 
   USER_TOKEN=$(echo "$LOGS" \
     | grep -A 20 "USER ACCESS URLs" \
     | grep -m 1 "Token:" \
-    | sed 's/.*Token: //')
+    | sed 's/.*Token: //' || true)
 
   if [[ -n "$HOST_TOKEN" && -n "$USER_TOKEN" ]]; then
     break
